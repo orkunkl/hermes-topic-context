@@ -10,7 +10,9 @@
     "url": "git+https://github.com/orkunkl/hermes-topic-context.git"
   },
   "scripts": {
-    "test": "echo 'Run the Python suite: uv run --no-project --with pytest --with fastapi --with httpx --with pyyaml python -m pytest tests/ -q'",
+    "test": "npm run test:py && npm run test:desktop",
+    "test:py": "uv run --no-project --with pytest==9.1.1 --with fastapi --with httpx --with pyyaml python -m pytest tests/ -q",
+    "test:desktop": "node --experimental-vm-modules tests/desktop_smoke.mjs",
     "check:desktop": "node --check desktop/plugin.js"
   }
 }

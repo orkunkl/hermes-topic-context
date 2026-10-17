@@ -95,15 +95,17 @@ topic-context/                  # one installable folder, both halves
 
 ## Development
 
-Tests run against a stub session store, so they need neither a live Hermes install nor a real `state.db`:
+Two suites, both runnable with nothing but `uv` and `node` on PATH:
 
 ```bash
-uv run --no-project \
-  --with pytest==9.1.1 --with fastapi --with httpx --with pyyaml \
-  python -m pytest tests/ -q
+npm run test:py        # the Python core + HTTP contract (52 tests)
+npm run test:desktop   # the desktop half, loaded and rendered headlessly (16 checks)
+npm test               # both
 ```
 
-`Hermes` itself is not importable from the plugin's own test environment, so `tests/test_api.py` stubs the two host modules the API layer touches (`hermes_constants`, `hermes_state`). That keeps the route tests hermetic — they pin the HTTP contract and the read-only guarantee, not Hermes internals.
+The Python suite runs against a stub session store, so it needs neither a live Hermes install nor a real `state.db`. Hermes itself is not importable from the plugin's own environment, so `tests/test_api.py` stubs the two host modules the API layer touches (`hermes_constants`, `hermes_state`). That keeps the route tests hermetic — they pin the HTTP contract and the read-only guarantee, not Hermes internals.
+
+`tests/desktop_smoke.mjs` closes the gap the Python suite cannot: it loads the real `desktop/plugin.js` in a Node VM with synthetic stand-ins for the three specifiers the host resolves (`@hermes/plugin-sdk`, `react`, `react/jsx-runtime`) and for the React hooks, then **executes every component in the rendered tree** with scripted hook values. That catches an import the host cannot resolve, an identifier used in a `jsx()` call but never imported, a wrong contribution area, a locale bundle missing a key, a chip filter that accidentally refetches, and every one of the pane's seven render branches. It is not a substitute for looking at the pane — it cannot judge layout — but it means the pane is never *blank*.
 
 Validate the package against the real loader:
 
