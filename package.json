@@ -1,0 +1,16 @@
+{
+  "name": "hermes-topic-context",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only session context pane for Hermes Agent.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orkunkl/hermes-topic-context.git"
+  },
+  "scripts": {
+    "test": "echo 'Run the Python suite: uv run --no-project --with pytest --with fastapi --with httpx --with pyyaml python -m pytest tests/ -q'",
+    "check:desktop": "node --check desktop/plugin.js"
+  }
+}
