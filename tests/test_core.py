@@ -17,48 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
 
 import topic_context_core as core  # noqa: E402
 
-
-# --------------------------------------------------------------------- stubs
-
-
-class StubDB:
-    """Minimal stand-in for ``hermes_state.SessionDB``'s read surface."""
-
-    def __init__(self, session=None, messages=None, hits=None):
-        self._session = session
-        self._messages = messages or []
-        self._hits = hits or []
-        self.queries: list[str] = []
-
-    def get_session(self, session_id):
-        if self._session is None:
-            return None
-        return self._session
-
-    def get_messages(self, session_id, **kwargs):
-        return list(self._messages)
-
-    def search_messages(self, query, **kwargs):
-        self.queries.append(query)
-        return list(self._hits)
-
-
-def msg(role, content="", tool_name=None):
-    return {"role": role, "content": content, "tool_name": tool_name}
+from _helpers import StubDB, msg  # noqa: E402
+from _helpers import session as session_row  # noqa: E402
 
 
 @pytest.fixture
 def session():
-    return {
-        "id": "s1",
-        "title": "Wire the topic-context pane into plugin.js",
-        "source": "desktop",
-        "model": "test-model",
-        "message_count": 12,
-        "started_at": 1792227629.15,
-        "last_activity_description": "reading references/desktop-plugins.md",
-        "cwd": "/home/ubuntu/.hermes",
-    }
+    return session_row()
 
 
 # --------------------------------------------------------------------- topics

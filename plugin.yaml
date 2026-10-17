@@ -1,0 +1,23 @@
+name: topic-context
+label: Topic Context
+version: 0.1.0
+description: >-
+  A read-only desktop pane that shows what the session you are in is about:
+  mined topics, a compiled brief (context / current state / direction), the
+  memory entries that match, and the past sessions that share the topic.
+  Deterministic and local — no LLM calls, no writes, no network.
+author: orkunkl
+license: MIT
+homepage: https://github.com/orkunkl/hermes-topic-context
+kind: standalone
+manifest_version: 2
+requires_hermes: ">=0.21"
+platforms:
+  - linux
+  - macos
+  - windows
+tags:
+  - desktop
+  - context
+  - memory
+  - sessions

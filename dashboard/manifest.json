@@ -1,0 +1,11 @@
+{
+  "name": "topic-context",
+  "label": "Topic Context",
+  "description": "Read-only context for the active session: topics, a compiled brief, matching memory and related past sessions.",
+  "icon": "Compass",
+  "version": "0.1.0",
+  "tab": {
+    "hidden": true
+  },
+  "api": "plugin_api.py"
+}
