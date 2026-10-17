@@ -113,6 +113,13 @@ hermes plugins doctor .
 
 While developing the desktop half, note that the app loads the **copy** in `~/.hermes/desktop-plugins/<id>/`, not your checkout. A symlinked package is watched and re-synced on save; otherwise run **Rescan** in **Capabilities → Plugins**.
 
+## Known limitations
+
+- **Frequency, not semantics.** Topics are mined by weight and repetition, not by understanding. A word that is grammatically important but topically empty is filtered by a curated English + Turkish function-word list; `bir`, `değil`, `yok`, `zaten` are dropped, but an *inflected* content word (`aktifti`, `çalışsın`) still gets through. A language-agnostic frequency approach cannot do morphology, and this plugin does not pretend to.
+- **Tool output is scanned only for its tool name.** A file dumped by a tool would otherwise swamp every topic in the session.
+- **The related-sessions section searches conversational roles only.** A match inside a tool payload makes for a snippet nobody can read.
+- **The brief is compiled, not summarised.** If you want prose that reasons about the session, that is a model call and this plugin deliberately makes none. The shape is ready for it: `build_context(..., brief_text=...)` accepts an authored brief and the pane labels which one it is showing.
+
 ## Design notes
 
 - **Read-only by construction.** No write route exists, and `tests/test_api.py::test_db_is_always_opened_read_only` fails the build if one is added.

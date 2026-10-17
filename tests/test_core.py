@@ -58,11 +58,12 @@ def test_tool_payloads_do_not_contribute_terms():
 
 
 def test_title_terms_outrank_body_terms():
-    messages = [msg("assistant", "alpha alpha alpha alpha alpha")]
+    """A word the title uses carries more weight than an equally-mentioned word
+    that only appears in the body."""
+    messages = [msg("assistant", "alpha alpha alpha beta beta beta")]
     topics = core.extract_topics("alpha", messages)
     scores = {t["label"]: t["score"] for t in topics}
-    # 5 body hits (5.0) vs 1 title hit + 5 body hits with the title bonus.
-    assert scores["alpha"] > 5.0
+    assert scores["alpha"] > scores["beta"]
 
 
 def test_strong_topics_suppress_redundant_bare_words():
@@ -88,6 +89,65 @@ def test_stopwords_and_numbers_are_not_topics():
 def test_respects_limit():
     messages = [msg("user", " ".join(f"token{i}" for i in range(60)))]
     assert len(core.extract_topics(None, messages, limit=7)) <= 7
+
+
+def test_a_tool_called_many_times_counts_once():
+    """A tool called forty times says how the session was worked, not what it
+    was about — it must not swamp the concrete topics."""
+    messages = [msg("tool", "{}", tool_name="execute_code") for _ in range(40)]
+    messages.append(msg("user", "look at config.yaml"))
+    topics = core.extract_topics(None, messages)
+    scores = {t["label"]: t["score"] for t in topics}
+    assert scores["execute_code"] == core._W[core.KIND_TOOL]
+    assert topics[0]["label"] == "config.yaml", "concrete topics must outrank a noisy tool"
+
+
+def test_a_bare_word_needs_repeating_to_be_a_topic():
+    once = core.extract_topics(None, [msg("user", "kubernetes")])
+    assert "kubernetes" not in {t["label"] for t in once}
+
+    twice = core.extract_topics(None, [msg("user", "kubernetes"), msg("assistant", "kubernetes")])
+    assert "kubernetes" in {t["label"] for t in twice}
+
+
+def test_a_title_word_still_needs_a_second_mention():
+    """The title *weights* its words; it does not exempt them from evidence.
+
+    Otherwise every grammar word in a sentence-shaped title becomes a chip.
+    """
+    once = core.extract_topics("Regenerating the index", [msg("user", "unrelated text")])
+    assert "Regenerating" not in {t["label"] for t in once}
+
+    twice = core.extract_topics("Regenerating the index", [msg("user", "Regenerating")])
+    assert "Regenerating" in {t["label"] for t in twice}
+
+
+def test_a_sentence_shaped_title_yields_only_its_repeated_words():
+    """The real failure: a Turkish title's function words flooding the chips."""
+    messages = [msg("user", "cognee kuruldu"), msg("assistant", "cognee hazır"), msg("user", "tamam")]
+    topics = core.extract_topics("Cognee aktif et, diğer profillerde çalışsın", messages)
+    labels = {t["label"] for t in topics}
+
+    lowered = {label.lower() for label in labels}
+    assert "cognee" in lowered
+    for noise in ("aktif", "diğer", "profillerde", "çalışsın"):
+        assert noise not in lowered, f"{noise!r} is grammar, not a topic"
+
+
+def test_turkish_function_words_are_not_topics():
+    """The English list cannot cover Turkish; a Turkish session otherwise fills
+    its chips with 'bir', 'değil', 'yok' and 'zaten'."""
+    text = "bir değil yok zaten tek doğru ile için ama ancak çok daha gerçekten " * 4
+    labels = {t["label"].lower() for t in core.extract_topics(None, [msg("user", text)])}
+    for noise in ("bir", "değil", "yok", "zaten", "tek", "doğru", "ile", "için", "ama", "çok"):
+        assert noise not in labels, f"{noise!r} is a function word"
+
+
+def test_a_strong_topic_absorbs_its_own_tool_name():
+    """'topic-context' the word should not sit beside 'topic-context' the path."""
+    messages = [msg("user", "topic_context_core.py topic_context_core.py topic-context topic-context")]
+    labels = {t["label"] for t in core.extract_topics(None, messages)}
+    assert "topic_context_core.py" in labels
 
 
 # ------------------------------------------------------------------ todos
@@ -152,6 +212,15 @@ def test_brief_falls_back_to_last_request_without_todos(session):
     assert "older ask" not in brief
 
 
+def test_brief_quotes_only_the_first_paragraph_of_the_latest_note(session):
+    """Flattening a whole message into one line turns a table into a run-on."""
+    note = "Here is the plan.\n\n| Profil | Durum |\n|---|---|\n| ravi | tamam |"
+    messages = [msg("user", "go"), msg("assistant", note)]
+    brief = core.render_brief(session, messages, [])
+    assert "Here is the plan." in brief
+    assert "| Profil |" not in brief
+
+
 def test_brief_reports_no_data_honestly():
     brief = core.render_brief({"id": "s"}, [], [])
     assert "## Context" in brief
@@ -214,6 +283,29 @@ def test_related_sessions_dedupes_and_excludes_active():
     assert [r["session_id"] for r in out] == ["s2", "s3"]
     assert out[0]["snippet"] == "a**plugin**b", "FTS markers become bold"
     assert db.queries and db.queries[0] == '"plugin"'
+
+
+def test_related_sessions_searches_conversational_roles_only():
+    """Tool payloads match constantly and read as noise, so they are excluded."""
+    db = StubDB(hits=[])
+    core.related_sessions(db, ["plugin"])
+    assert db.search_calls[0]["role_filter"] == ["user", "assistant"]
+
+
+def test_related_sessions_resolves_a_missing_title():
+    db = StubDB(hits=[{"session_id": "s3", "snippet": "x", "session_started": 1}])
+    db.titles["s3"] = "Resolved from the store"
+    out = core.related_sessions(db, ["plugin"])
+    assert out[0]["title"] == "Resolved from the store"
+
+
+def test_related_sessions_survives_a_title_lookup_failure():
+    class NoTitles(StubDB):
+        def get_session_title(self, session_id):
+            raise RuntimeError("store exploded")
+
+    db = NoTitles(hits=[{"session_id": "s3", "snippet": "x", "session_started": 1}])
+    assert core.related_sessions(db, ["plugin"])[0]["title"] == "untitled session"
 
 
 def test_related_sessions_survives_a_broken_query():

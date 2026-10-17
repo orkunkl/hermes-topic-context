@@ -16,6 +16,8 @@ class StubDB:
         self._hits = hits or []
         self._sessions = sessions if sessions is not None else ([session] if session else [])
         self.queries: list[str] = []
+        self.search_calls: list[dict] = []
+        self.titles: dict[str, str] = {}
 
     def get_session(self, session_id):
         if self._session is None:
@@ -27,7 +29,11 @@ class StubDB:
 
     def search_messages(self, query, **kwargs):
         self.queries.append(query)
+        self.search_calls.append(kwargs)
         return list(self._hits)
+
+    def get_session_title(self, session_id):
+        return self.titles.get(session_id)
 
     def list_sessions_rich(self, **kwargs):
         return list(self._sessions)

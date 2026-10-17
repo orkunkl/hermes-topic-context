@@ -47,7 +47,7 @@ KIND_PHRASE = "phrase"
 KIND_IDENT = "ident"
 KIND_TERM = "term"
 
-_STOPWORDS = frozenset(
+_STOPWORDS_EN = frozenset(
     """
     a an the and or but if then than that this these those is are was were be been being
     to of in on for with at by from as it its i you he she we they them his her their our
@@ -56,9 +56,31 @@ _STOPWORDS = frozenset(
     each few more most other some such only own same too very just also about into over
     after before under again further once here there out up down off above below between
     during through because while let lets get got make made use used using need needs
-    want wants like also new now one two three first last next well okay ok sure fine
+    want wants like new now one two three first last next well okay ok sure fine
     """.split()
 )
+
+# Function words in Turkish, which the English list cannot cover and whose
+# absence is very visible: without them a Turkish session's chips fill up with
+# "bir", "değil", "yok" and "zaten". This is word filtering, not morphology —
+# inflected content words ("aktifti") still get through, and that is a known
+# limit of a language-agnostic frequency approach.
+_STOPWORDS_TR = frozenset(
+    """
+    bir bu şu o ve ile için gibi kadar daha çok az en de da ki mi mı mu mü ne nasıl
+    neden niçin çünkü ama fakat ancak veya ya yani ise eğer her hiç hep tüm bütün bazı
+    kendi şey şeyler zaman sonra önce üzere göre olarak olan oldu olur olmaz var yok
+    değil evet hayır tamam peki iyi kötü büyük küçük yeni eski aynı başka diğer tek
+    işte artık hâlâ hala zaten sadece belki mutlaka gerçekten aslında özellikle genelde
+    şimdi bugün dün yarın ben sen biz siz onlar benim senin onun bizim sizin onların
+    bana sana ona bize size onlara beni seni onu bizi sizi onları bende sende onda
+    bizde sizde onlarda hem ister olsun gerekiyor gerek lazım mümkün doğru yanlış
+    varmış yapmak etmek olmak vermek almak gelmek gitmek demek bilmek görmek istemek
+    nasılsın lütfen tabii ki kesinlikle hiçbir birçok böyle şöyle öyle nerede
+    """.split()
+)
+
+_STOPWORDS = _STOPWORDS_EN | _STOPWORDS_TR
 
 # ------------------------------------------------------------------ regexen
 
@@ -77,12 +99,17 @@ _WORD_RE = re.compile(r"[^\W\d_][\w-]{2,}", re.UNICODE)
 _W = {
     KIND_COMMAND: 3.0,
     KIND_FILE: 3.0,
-    KIND_TOOL: 2.6,
+    KIND_TOOL: 1.6,
     KIND_PHRASE: 2.2,
     KIND_IDENT: 1.8,
-    KIND_TERM: 1.0,
+    KIND_TERM: 0.5,
 }
 _TITLE_BONUS = 1.8
+# A bare word mentioned once is not a topic — it is a word. This holds for title
+# words too: the title earns its keep by *weighting* the words it uses (see
+# ``_TITLE_BONUS``), not by exempting them from evidence. A session whose title
+# says "cognee" mentions cognee in the body; one-off title words are grammar.
+_TERM_MIN_MENTIONS = 2
 
 
 # -------------------------------------------------------------------- paths
@@ -140,6 +167,20 @@ def _truncate(text: str, limit: int) -> str:
     if len(flat) <= limit:
         return flat
     return flat[: limit - 1].rstrip() + "…"
+
+
+def _first_paragraph(text: str) -> str:
+    """The opening paragraph, on one line.
+
+    A whole message flattened to one line reads as a run-on: markdown tables and
+    bullet lists lose every cue that made them legible. The first paragraph is
+    the part that says what the message was *about*.
+    """
+    for block in text.split("\n\n"):
+        flat = " ".join(block.split())
+        if flat:
+            return flat
+    return " ".join(text.split())
 
 
 def _is_noise(label: str) -> bool:
@@ -215,10 +256,14 @@ def extract_topics(
         _bump(store, word, KIND_TERM, _W[KIND_TERM] + _TITLE_BONUS)
 
     recent = list(messages)[-window:] if window > 0 else list(messages)
+    seen_tools: set[str] = set()
     for message in recent:
         role = message.get("role")
         tool_name = message.get("tool_name")
-        if tool_name and role == "tool":
+        # A tool name counts ONCE: a tool called forty times says how the session
+        # was worked, not what it was about, and would otherwise swamp the list.
+        if tool_name and role == "tool" and tool_name not in seen_tools:
+            seen_tools.add(str(tool_name))
             _bump(store, str(tool_name), KIND_TOOL, _W[KIND_TOOL])
 
         text = _as_text(message.get("content"))
@@ -253,8 +298,11 @@ def extract_topics(
     result: list[dict[str, Any]] = []
     for slot in ranked:
         label = slot["label"]
-        if slot["kind"] == KIND_TERM and any(label.lower() in s for s in strong):
-            continue
+        if slot["kind"] == KIND_TERM:
+            if any(label.lower() in s for s in strong):
+                continue
+            if slot["count"] < _TERM_MIN_MENTIONS:
+                continue
         slot.pop("_kind_weight", None)
         slot["score"] = round(slot["score"], 2)
         result.append(dict(slot))
@@ -359,7 +407,7 @@ def render_brief(
                 last_note = text
                 break
     if last_note:
-        facts.append(f"Latest note: {_truncate(last_note, NOTE_CHARS)}")
+        facts.append(f"Latest note: {_truncate(_first_paragraph(last_note), NOTE_CHARS)}")
 
     counts = session.get("message_count")
     if counts:
@@ -389,7 +437,10 @@ def render_brief(
                     last_request = text
                     break
         if last_request:
-            lines.append(f"_No open task list._ Last request: {_truncate(last_request, REQUEST_CHARS)}")
+            lines.append(
+                "_No open task list._ Last request: "
+                f"{_truncate(_first_paragraph(last_request), REQUEST_CHARS)}"
+            )
         else:
             lines.append("_No open task list and no recent request._")
 
@@ -469,7 +520,15 @@ def related_sessions(
     query = " OR ".join(f'"{t}"' for t in query_terms)
 
     try:
-        hits = db.search_messages(query, limit=max(limit * 4, 24), sort="newest")
+        # Conversational roles only: a match inside a tool payload (a file dump,
+        # a JSON blob) makes for a snippet nobody can read and a hit that says
+        # nothing about what the session was about.
+        hits = db.search_messages(
+            query,
+            role_filter=["user", "assistant"],
+            limit=max(limit * 4, 24),
+            sort="newest",
+        )
     except Exception:
         # A malformed FTS query must never take the pane down — the caller
         # renders an empty section instead.
@@ -482,7 +541,7 @@ def related_sessions(
             continue
         seen[sid] = {
             "session_id": sid,
-            "title": hit.get("title") or hit.get("session_title") or "(untitled session)",
+            "title": hit.get("title") or hit.get("session_title") or _title_for(db, sid),
             "source": hit.get("source"),
             "day": _iso_day(hit.get("session_started") or hit.get("timestamp")),
             "timestamp": hit.get("timestamp"),
@@ -492,6 +551,15 @@ def related_sessions(
         if len(seen) >= limit:
             break
     return list(seen.values())
+
+
+def _title_for(db: Any, session_id: str) -> str:
+    """Resolve a session's title, tolerating stores without the helper."""
+    try:
+        title = db.get_session_title(session_id)
+    except Exception:
+        title = None
+    return title or "untitled session"
 
 
 # ---------------------------------------------------------------- aggregate
