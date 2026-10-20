@@ -38,6 +38,8 @@ The core is a pure function over rows. If you later want a model-written brief, 
 
 ## Install
 
+[**Install in Hermes**](hermes://plugin/install?repo=orkunkl/hermes-topic-context&enable=1) — or from a shell:
+
 ```bash
 hermes plugins install orkunkl/hermes-topic-context --enable
 ```
