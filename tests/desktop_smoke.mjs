@@ -116,23 +116,43 @@ function hookValues({ storedId = 's1', busy = false, query = {}, states = [] } =
  * Execute a tree: invoke every function component (with a fresh hook read
  * cursor, exactly as React would for a first render) and flatten the result
  * into the list of host elements the pane actually produces.
+ *
+ * The returned array also carries `.text` — the strings of host elements that
+ * were actually rendered. Use it, not the node props: a component node's props
+ * still hold its *unevaluated* children, so searching those finds content a
+ * collapsed section never rendered.
  */
-function expand(node, sandbox, values, out = []) {
+function expand(node, sandbox, values, out = [], text = []) {
+  out.text = text
   if (node === null || node === undefined || typeof node !== 'object') return out
   if (Array.isArray(node)) {
-    for (const child of node) expand(child, sandbox, values, out)
+    for (const child of node) expand(child, sandbox, values, out, text)
     return out
   }
   const { type, props } = node
   if (typeof type === 'function') {
     out.push({ __component: type.name || '(anonymous component)', props: props || {} })
     sandbox.__hooks = values
-    expand(type(props || {}), sandbox, values, out)
+    expand(type(props || {}), sandbox, values, out, text)
     return out
   }
   out.push(node)
-  if (props && 'children' in props) expand(props.children, sandbox, values, out)
+  if (props && 'children' in props) {
+    collectText(props.children, text)
+    expand(props.children, sandbox, values, out, text)
+  }
   return out
+}
+
+/** Strings a host element renders, from its children (strings / arrays / nodes). */
+function collectText(children, text) {
+  if (typeof children === 'string' || typeof children === 'number') {
+    text.push(String(children))
+    return
+  }
+  if (Array.isArray(children)) {
+    for (const child of children) collectText(child, text)
+  }
 }
 
 function harness() {
@@ -223,9 +243,15 @@ const branches = [
   ['error', hookValues({ storedId: 's1', query: { isPending: false, isError: true, refetch: () => {} } })],
   ['data', hookValues({ storedId: 's1', query: SETTLED })],
   ['data, markdown source view', hookValues({ storedId: 's1', query: SETTLED, states: [null, true] })],
+  ['data, memory section expanded', hookValues({ storedId: 's1', query: SETTLED, states: [null, false, true] })],
   ['empty payload', hookValues({
     storedId: 's1',
     query: { ...SETTLED, data: { ...PAYLOAD, topics: [], memory: [], sessions: [] } }
+  })],
+  ['empty payload, memory section expanded', hookValues({
+    storedId: 's1',
+    query: { ...SETTLED, data: { ...PAYLOAD, topics: [], memory: [], sessions: [] } },
+    states: [null, false, true]
   })],
   ['payload with no cognee layer', hookValues({
     storedId: 's1',
@@ -297,16 +323,61 @@ check('a topic chip filters the lists without issuing a new request', () => {
   assert.equal(calls.queries.length, 1, 'filtering must not refetch — it is local state')
 })
 
+const EMPTY_PAYLOAD = { ...PAYLOAD, topics: [], memory: [], sessions: [] }
+
+/** Only what was rendered — see `expand` on why node props are not enough.
+ *  Whitespace is collapsed because a highlighted term arrives as its own
+ *  string, and joining runs would otherwise read "plugin.js  lives under". */
+function textOf(nodes) {
+  return nodes.text.join(' ').replace(/\s+/g, ' ')
+}
+
 check('a session with no topics and no matches still renders its sections', () => {
   const fresh = harness()
   plugin.register(fresh.ctx)
-  const nodes = expand(fresh.registrations[0].render(), sandbox, hookValues({
-    query: { ...SETTLED, data: { ...PAYLOAD, topics: [], memory: [], sessions: [] } }
-  }))
-  const text = JSON.stringify(nodes.map(node => node.props && node.props.children))
+  const text = textOf(expand(fresh.registrations[0].render(), sandbox, hookValues({
+    query: { ...SETTLED, data: EMPTY_PAYLOAD }
+  })))
   assert.ok(text.includes('noTopics'), 'the empty topic state is missing')
-  assert.ok(text.includes('noMemory'), 'the empty memory state is missing')
   assert.ok(text.includes('noSessions'), 'the empty session state is missing')
+})
+
+check('the memory section is collapsed by default and expands on click', () => {
+  const closed = harness()
+  plugin.register(closed.ctx)
+  const closedNodes = expand(closed.registrations[0].render(), sandbox, hookValues({ query: SETTLED }))
+  assert.ok(
+    !textOf(closedNodes).includes('plugin.js lives under'),
+    'memory content must not render while the section is collapsed'
+  )
+
+  const toggles = closedNodes.filter(node => node.type === 'button' && 'aria-expanded' in node.props)
+  assert.equal(toggles.length, 1, 'expected exactly one collapsible section header')
+  assert.equal(toggles[0].props['aria-expanded'], false)
+
+  // Toggling must reveal the body, not refetch anything.
+  const opened = harness()
+  plugin.register(opened.ctx)
+  const openNodes = expand(opened.registrations[0].render(), sandbox, hookValues({
+    query: SETTLED,
+    states: [null, false, true]
+  }))
+  assert.equal(
+    openNodes.filter(node => 'aria-expanded' in node.props)[0].props['aria-expanded'],
+    true
+  )
+  assert.ok(
+    textOf(openNodes).includes('plugin.js lives under'),
+    'expanding must render the memory entries'
+  )
+})
+
+check('the collapsed memory header still reports its match count', () => {
+  const fresh = harness()
+  plugin.register(fresh.ctx)
+  const nodes = expand(fresh.registrations[0].render(), sandbox, hookValues({ query: SETTLED }))
+  const badge = nodes.find(node => node.type === 'Badge' && String(node.props.children) === '1')
+  assert.ok(badge, 'the memory section header must show how many entries matched')
 })
 
 /* ------------------------------------------------------------------ report */

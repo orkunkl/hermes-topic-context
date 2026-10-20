@@ -93,23 +93,62 @@ function splitMatches(text, terms) {
 
 /* --------------------------------------------------------------- primitives */
 
-function Section({ title, count, action, children, className }) {
-  return jsxs('div', {
-    className: cn('border-b border-(--ui-stroke-secondary) px-3 py-2.5', className),
-    children: [
-      jsxs('div', { className: 'mb-2 flex items-center gap-1.5', children: [
-        jsx('span', {
-          className: 'text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-(--ui-text-quaternary)',
-          children: title
-        }),
-        count === undefined || count === null
-          ? null
-          : jsx(Badge, { variant: 'muted', size: 'xs', children: String(count) }),
-        action ? jsx('div', { className: 'ml-auto flex items-center gap-1', children: action }) : null
-      ]}),
-      children
-    ]
-  })
+/** Section title row: chevron (when collapsible), label, and a count badge. */
+function SectionLabel({ title, count, collapsible = false, expanded = true }) {
+  return jsxs('span', { className: 'flex items-center gap-1.5', children: [
+    collapsible
+      ? jsx(Codicon, {
+          name: expanded ? 'chevron-down' : 'chevron-right',
+          className: 'shrink-0 text-(--ui-text-quaternary)'
+        })
+      : null,
+    jsx('span', {
+      className: 'text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-(--ui-text-quaternary)',
+      children: title
+    }),
+    count === undefined || count === null
+      ? null
+      : jsx(Badge, { variant: count ? 'muted' : 'outline', size: 'xs', children: String(count) })
+  ]})
+}
+
+const SECTION_CLASS = 'border-b border-(--ui-stroke-secondary) px-3 py-2.5'
+
+/**
+ * A section that folds. Kept separate from `Section` on purpose: the collapse
+ * state belongs to the section that actually toggles, so a page of static
+ * sections stays hook-free and a test can address this state positionally.
+ */
+function CollapsibleSection({ t, title, count, action, children, className, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return jsxs('div', { className: cn(SECTION_CLASS, className), children: [
+    jsxs('div', { className: 'mb-2 flex items-center gap-1.5', children: [
+      jsx('button', {
+        type: 'button',
+        onClick: () => setOpen(value => !value),
+        'aria-expanded': open,
+        'aria-label': open ? t('collapse') : t('expand'),
+        className: 'flex w-full cursor-pointer items-center gap-1.5 text-left',
+        children: jsx(SectionLabel, { title, count, collapsible: true, expanded: open })
+      }),
+      action ? jsx('div', { className: 'ml-auto flex items-center gap-1', children: action }) : null
+    ]}),
+    open ? jsx('div', { children }) : null
+  ]})
+}
+
+function Section({ t, title, count, action, children, className, collapsible = false, defaultOpen = true }) {
+  if (collapsible) {
+    return jsx(CollapsibleSection, { t, title, count, action, className, defaultOpen, children })
+  }
+  return jsxs('div', { className: cn(SECTION_CLASS, className), children: [
+    jsxs('div', { className: 'mb-2 flex items-center gap-1.5', children: [
+      jsx(SectionLabel, { title, count }),
+      action ? jsx('div', { className: 'ml-auto flex items-center gap-1', children: action }) : null
+    ]}),
+    jsx('div', { children })
+  ]})
 }
 
 function IconButton({ icon, label, onClick, active }) {
@@ -367,6 +406,7 @@ function Pane({ ctx }) {
     header,
     jsxs('div', { className: 'min-h-0 flex-1 overflow-y-auto', children: [
       jsx(Section, {
+        t,
         title: t('sectionBrief'),
         children: jsx(Brief, {
           t,
@@ -377,16 +417,23 @@ function Pane({ ctx }) {
         })
       }),
       jsx(Section, {
+        t,
         title: t('sectionTopics'),
         count: topics.length,
         children: jsx(TopicChips, { t, topics, active: filter, onPick: setFilter })
       }),
+      // Collapsed by default: this section is often empty, and a one-line header
+      // with its match count is a better empty state than a paragraph saying so.
       jsx(Section, {
+        t,
         title: t('sectionMemory'),
         count: memory.length,
+        collapsible: true,
+        defaultOpen: false,
         children: jsx(MemoryList, { t, entries: memory })
       }),
       jsx(Section, {
+        t,
         title: t('sectionSessions'),
         count: sessions.length,
         className: 'border-b-0',
@@ -427,6 +474,8 @@ export default {
         authored: 'authored',
         showSource: 'Show markdown source',
         showRendered: 'Show rendered markdown',
+        expand: 'Expand section',
+        collapse: 'Collapse section',
         all: 'All',
         noTopics: 'No distinctive topics yet.',
         noMemory: 'No memory entry matches this topic.',
@@ -450,6 +499,8 @@ export default {
         authored: 'yazıldı',
         showSource: 'Markdown kaynağını göster',
         showRendered: 'Render edilmiş markdown',
+        expand: 'Bölümü aç',
+        collapse: 'Bölümü kapat',
         all: 'Tümü',
         noTopics: 'Henüz belirgin bir konu yok.',
         noMemory: 'Bu konuyla eşleşen hafıza kaydı yok.',

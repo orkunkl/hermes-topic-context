@@ -8,7 +8,7 @@ A right-hand pane shows, for the session you are currently in:
 
 - **Brief** — a three-section markdown brief: `Context`, `Current state`, `Direction`. Rendered with the app's own markdown pipeline, with a `</>` toggle to see the raw source.
 - **Topics** — the terms the conversation actually keeps touching: slash commands, file paths, tool names, quoted phrases, code identifiers.
-- **Memory** — the `MEMORY.md` / `USER.md` entries that match those topics, with the matching terms marked.
+- **Memory** — the `MEMORY.md` / `USER.md` entries that match those topics, with the matching terms marked. A collapsible section, closed by default, whose header carries the match count so a session with no hits costs one line instead of a paragraph explaining the absence.
 - **Related sessions** — earlier sessions that share the topic. Click one to open it.
 
 ## The point: zero model calls
@@ -35,6 +35,25 @@ That property is what makes the pane safe to leave enabled: it cannot change you
 The todo list is in-memory on the agent, but every `todo_list` call writes the full list into the transcript — so the last one *is* the session's live plan, and reading it costs nothing.
 
 The core is a pure function over rows. If you later want a model-written brief, the shape is already there: `build_context(..., brief_text=...)` takes an authored brief and reports `brief_source: "authored"` instead of `"compiled"`, and the pane labels which one it is showing.
+
+## Where the data comes from — and what is deliberately not wired up
+
+| Source | Reached how | Refresh cost |
+|---|---|---|
+| Built-in memory (`MEMORY.md` / `USER.md`) | direct file read | free |
+| Session history + related sessions | read-only SQLite, FTS5 | free |
+| Holographic / Mnemosyne | their local SQLite store | free, but per-provider code |
+| Cognee | HTTP to the Cognee server | a network round-trip |
+| Mem0 / Honcho / Hindsight | the provider's own API client | a network round-trip, needs keys |
+| ByteRover | shelling out to `brv` | a subprocess |
+
+**Only the first two tiers ship.** That is a deliberate line, not an oversight:
+
+1. **The `MemoryProvider` interface has no synchronous query.** Its read door is `prefetch(query, session_id)`, and for Cognee that method does not run a recall — it *drains* the result of a background recall that `queue_prefetch()` started on an earlier turn's thread. Call `prefetch()` on a provider you just built and you get `""`. There is no "give me the memories related to X" call to make.
+2. **A plugin backend has no handle on a live agent.** Providers are constructed per agent session (`initialize(session_id)`); the pane's routes run in the gateway process with no agent in scope, so it would have to build its own provider instance — and for Cognee that means opening a connection to a remote server on every refresh.
+3. **It would break the premise.** The pane's whole value is that refreshing costs one local read. A tier that opens a socket, or spawns a CLI, cannot be on the same budget — and the section would be empty or slow exactly when the server is unreachable.
+
+Reaching the local-SQLite tier (Holographic, Mnemosyne) is the one addition that fits: it is a read-only file query with no network, and it would slot in beside the built-in memory reader as another source in the same section. `payload.cognee` exists as the seam for the remote tier if it is ever wanted behind an explicit opt-in.
 
 ## Install
 
